@@ -100,6 +100,18 @@
         </label>
       </div>
       <div class="eng">
+        <div class="chk"><input type="checkbox" id="o" v-model="openrouter.on" :disabled="running"><b>OpenRouter (STT)</b></div>
+        <label>API key <input type="password" v-model="openrouter.key" :disabled="running" placeholder="sk-or-..." autocomplete="off"></label>
+        <label style="margin-top:8px">Model
+          <input type="text" list="or-models" v-model="openrouter.model" :disabled="running" autocapitalize="off" autocorrect="off" spellcheck="false">
+        </label>
+        <datalist id="or-models">
+          <option value="openai/whisper-large-v3"></option>
+          <option value="openai/whisper-1"></option>
+        </datalist>
+        <div class="hint">Key တစ်ခုတည်းနဲ့ model အမျိုးမျိုး ပြောင်းစမ်းလို့ရတယ်။ Model နာမည်ကို ကိုယ်တိုင်လည်း ရိုက်ထည့်နိုင်တယ်။</div>
+      </div>
+      <div class="eng">
         <div class="chk"><input type="checkbox" id="g" v-model="google.on" :disabled="running"><b>Google Cloud Speech-to-Text</b></div>
         <label>API key <input type="password" v-model="google.key" :disabled="running" placeholder="AIza..." autocomplete="off"></label>
         <div class="hint">Cloud Console မှာ Speech-to-Text API (ဘာသာပြန်ချင်ရင် Cloud Translation API ပါ) ဖွင့်ထားရမယ်။</div>
@@ -205,6 +217,7 @@ createApp({
     const langIdx = ref(0);
     const chunkSec = ref(6);
     const whisper = reactive({ on: true, key: saved.whisperKey || '', model: 'whisper-1' });
+    const openrouter = reactive({ on: false, key: saved.orKey || '', model: 'openai/whisper-large-v3' });
     const google = reactive({ on: true, key: saved.googleKey || '' });
     const web = reactive({ on: false });
     const tr = reactive({ on: false, target: 'en' });
@@ -225,10 +238,10 @@ createApp({
     let speech = null, webFatal = false;
 
     const MIME = 'audio/webm;codecs=opus';
-    const useChunks = () => (whisper.on && whisper.key) || (google.on && google.key);
+    const useChunks = () => (whisper.on && whisper.key) || (openrouter.on && openrouter.key) || (google.on && google.key);
 
     function saveKeys() {
-      try { sessionStorage.setItem('stt-test', JSON.stringify({ whisperKey: whisper.key, googleKey: google.key })); } catch (e) {}
+      try { sessionStorage.setItem('stt-test', JSON.stringify({ whisperKey: whisper.key, googleKey: google.key, orKey: openrouter.key })); } catch (e) {}
     }
 
     // ---------- capture ----------
@@ -293,6 +306,7 @@ createApp({
 
       const jobs = [];
       if (whisper.on && whisper.key) jobs.push(['Whisper · ' + whisper.model, () => callWhisper(blob)]);
+      if (openrouter.on && openrouter.key) jobs.push(['OpenRouter · ' + openrouter.model, () => callOpenRouter(blob)]);
       if (google.on && google.key) jobs.push(['Google STT', () => callGoogle(blob)]);
 
       jobs.forEach(([name, fn]) => {
@@ -329,6 +343,26 @@ createApp({
       });
       const j = await r.json();
       if (!r.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + r.status));
+      return (j.text || '').trim();
+    }
+
+    async function callOpenRouter(blob) {
+      const data = await blobToBase64(blob);
+      const r = await fetch('https://openrouter.ai/api/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + openrouter.key },
+        body: JSON.stringify({
+          model: openrouter.model.trim(),
+          input_audio: { data, format: 'webm' },
+          language: lang.value.whisper
+        })
+      });
+      let j = {};
+      try { j = await r.json(); } catch (e) {}
+      if (!r.ok) {
+        const m = j.error && (j.error.message || j.error);
+        throw new Error(typeof m === 'string' ? m : ('HTTP ' + r.status));
+      }
       return (j.text || '').trim();
     }
 
@@ -460,7 +494,7 @@ createApp({
     }
 
     return {
-      languages, source, langIdx, chunkSec, whisper, google, web, tr,
+      languages, source, langIdx, chunkSec, whisper, openrouter, google, web, tr,
       running, error, level, rows, webLines, webInterim, subtitle,
       start, stop, clearAll, exportJson
     };
